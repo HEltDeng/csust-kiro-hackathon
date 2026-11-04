@@ -39,3 +39,18 @@ python3 -m unittest discover -s tests -v
 生产由 Nginx 与 `kiro-hackathon.service` 运行。`ops/deploy-campus.py` 对比部署前文件摘要，在服务器创建受限备份，升级服务和活动静态页，检查 Nginx 配置后切换首页；异常时恢复配置、代码和服务。数据库始终沿用原实例，不用备份覆盖线上报名数据。
 
 仅切换 `/` 和 `/index.html` 到活动页面；原官网代码、APP 的配置、下载、隐私和其他路径保持原样。旧版 `ops/` 部署脚本留作历史参考，不应再用于更新包含后台的版本。
+
+## Git 仓库
+
+- 完整项目：<https://github.com/HEltDeng/csust-kiro-hackathon>，包含网站、后台、测试和运维脚本。
+- 前端源码：<https://github.com/HEltDeng/csust-kiro-hackathon-frontend>，对应完整项目的 `dist/` 目录。
+- 后端源码：<https://github.com/HEltDeng/csust-kiro-hackathon-backend>，对应完整项目的 `server/` 目录。
+
+完整项目是主要开发位置；前端和后端仓库是对应目录的 Git 子树。测试及部署脚本保留在完整项目中。提交完整项目后，可从完整项目的根目录同步拆分仓库；新克隆的完整项目需先添加远程地址：
+
+```sh
+git remote add frontend https://github.com/HEltDeng/csust-kiro-hackathon-frontend.git
+git remote add backend https://github.com/HEltDeng/csust-kiro-hackathon-backend.git
+git subtree push --prefix=dist frontend main
+git subtree push --prefix=server backend main
+```
