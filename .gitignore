@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+*.sqlite3*
+.env
+.env.*
+admin-bootstrap.json
+mail-settings.json
+报名数据/
+.DS_Store
