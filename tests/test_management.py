@@ -11,7 +11,7 @@ import sys
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from urllib.error import HTTPError
 from urllib.request import HTTPCookieProcessor, Request, build_opener
 
@@ -118,6 +118,19 @@ class ManagementTests(unittest.TestCase):
         self.assertTrue(result['password_configured'])
         self.assertNotIn('test-authorization-code', json.dumps(result))
         self.assertEqual((self.state / 'mail-settings.json').stat().st_mode & 0o777, 0o600)
+        updated = dict(mail, from_name='Campus Team', password='')
+        self.assertEqual(self.request('/api/admin/mail-settings', updated, csrf=self.csrf)[0], 200)
+        settings_file = self.state / 'mail-settings.json'
+        saved = json.loads(settings_file.read_text())
+        self.assertEqual(saved['password'], mail['password'])
+        for change in ({'host':'smtp2.example.org'}, {'username':'team@example.org'},
+                       {'port':587, 'security':'starttls'}):
+            with self.subTest(change=change):
+                self.assertEqual(self.request('/api/admin/mail-settings', dict(updated, **change), csrf=self.csrf)[0], 400)
+                self.assertEqual(json.loads(settings_file.read_text()), saved)
+        switched = dict(updated, host='smtp2.example.org', password='new-test-code')
+        self.assertEqual(self.request('/api/admin/mail-settings', switched, csrf=self.csrf)[0], 200)
+        self.assertEqual(json.loads(settings_file.read_text()), switched)
         self.assertEqual(self.request('/api/admin/forward', {'id':1,'recipient':'invalid\naddress'}, csrf=self.csrf)[0], 400)
 
     def test_password_change_revokes_sessions(self):
@@ -128,6 +141,26 @@ class ManagementTests(unittest.TestCase):
         self.assertEqual(self.request('/api/admin/login', {'username':self.username,'password':self.password})[0], 401)
         self.password = 'new-secure-password-123'
         self.login()
+
+    def test_password_change_invalidates_pending_login(self):
+        manager = management.Management(lambda: sqlite3.connect(self.database), self.state, {self.origin}, True)
+        login = Mock(headers={}, client_address=('127.0.0.1', 0))
+        rotation = Mock()
+        manager.read_json = lambda h: ({'username': self.username, 'password': self.password} if h is login
+                                       else {'current': self.password, 'new': 'new-secure-password-123'})
+        original_hash = management.password_hash
+
+        def finish_login_hash(password, salt=None):
+            verified = original_hash(password, salt)
+            with patch.object(management, 'password_hash', original_hash):
+                manager.change_password(rotation)
+            return verified
+
+        with patch.object(management, 'password_hash', finish_login_hash):
+            manager.login(login)
+        self.assertEqual(rotation.respond.call_args.args[0], 200)
+        self.assertEqual(login.respond.call_args.args[0], 401)
+        self.assertFalse(manager.sessions)
 
     def test_forward_constructs_message_and_uses_tls(self):
         self.register()

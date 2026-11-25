@@ -108,7 +108,7 @@
       for (const key of ['host','username','from_address','from_name']) form.elements[key].value=result.mail[key] || '';
       form.elements.security.value=result.mail.security || 'ssl'; form.elements.password.value='';
       $('#mail-state').textContent=result.password_configured ? '已保存配置' : '未接入';
-      $('#mail-password-note').textContent=result.password_configured ? '已保存授权码；如不更换，请留空。' : '请先在邮箱服务商处开启 SMTP 并获取授权码。';
+      $('#mail-password-note').textContent=result.password_configured ? '已保存授权码。更换服务器、加密方式或登录账号时，请重新输入授权码。' : '请先在邮箱服务商处开启 SMTP 并获取授权码。';
     } catch (error) { status($('#mail-form'), error.message); }
   }
   $('#mail-form').addEventListener('submit', async event => {

@@ -79,6 +79,7 @@ class Management:
         self.allowed_origins = allowed_origins
         self.preview = preview
         self.sessions = {}
+        self.password_generation = 0
         self.attempts = defaultdict(deque)
         self.lock = threading.Lock()
 
@@ -226,6 +227,8 @@ class Management:
         data = self.read_json(h)
         username = text(data.get('username', ''), 80)
         password = text(data.get('password', ''), 256)
+        with self.lock:
+            generation = self.password_generation
         with closing(self.connect()) as db:
             account = db.execute('SELECT username, salt, password_hash FROM admin_account WHERE id = 1').fetchone()
         if not account:
@@ -239,9 +242,14 @@ class Management:
         csrf = secrets.token_urlsafe(32)
         key = hashlib.sha256(token.encode()).hexdigest()
         with self.lock:
-            self.sessions = {k: v for k, v in self.sessions.items() if v['expires'] >= time.monotonic()}
-            self.sessions[key] = {'csrf': csrf, 'expires': time.monotonic() + SESSION_TTL}
-            self.attempts.pop(self.client(h), None)
+            rotated = generation != self.password_generation
+            if not rotated:
+                self.sessions = {k: v for k, v in self.sessions.items() if v['expires'] >= time.monotonic()}
+                self.sessions[key] = {'csrf': csrf, 'expires': time.monotonic() + SESSION_TTL}
+                self.attempts.pop(self.client(h), None)
+        if rotated:
+            h.respond(401, {'ok': False, 'error': '密码已修改，请重新登录'})
+            return
         h.respond(200, {'ok': True, 'csrf': csrf}, {'Set-Cookie': self.cookie(token)})
 
     def save_announcement(self, h):
@@ -285,9 +293,17 @@ class Management:
         security = text(data.get('security', ''), 12)
         if (security, port) not in (('ssl', 465), ('starttls', 587)):
             raise ValueError('encrypted SMTP is required')
-        config = {'host': host, 'port': port, 'security': security, 'username': text(data.get('username', ''), 254), 'from_address': valid_email(data.get('from_address', '')), 'from_name': text(data.get('from_name', ''), 80, required=False), 'password': text(data.get('password', ''), 256, required=False) or old.get('password', '')}
-        if not config['password']:
-            raise ValueError('missing authorization code')
+        config = {'host': host, 'port': port, 'security': security,
+                  'username': text(data.get('username', ''), 254),
+                  'from_address': valid_email(data.get('from_address', '')),
+                  'from_name': text(data.get('from_name', ''), 80, required=False)}
+        password = text(data.get('password', ''), 256, required=False)
+        if not password and all(old.get(key) == config[key] for key in ('host', 'port', 'security', 'username')):
+            password = old.get('password', '')
+        if not password:
+            h.respond(400, {'ok': False, 'error': '请为当前 SMTP 服务器和账号输入授权码'})
+            return
+        config['password'] = password
         path = self.state_dir / 'mail-settings.json'
         tmp = self.state_dir / ('.mail-settings-' + secrets.token_hex(8))
         try:
@@ -348,7 +364,12 @@ class Management:
                 return
             salt, hashed = password_hash(new)
             with db:
-                db.execute('UPDATE admin_account SET salt = ?, password_hash = ? WHERE id = 1', (salt, hashed))
+                result = db.execute('UPDATE admin_account SET salt = ?, password_hash = ? WHERE id = 1 AND password_hash = ?',
+                                    (salt, hashed, account[1]))
+            if result.rowcount != 1:
+                h.respond(409, {'ok': False, 'error': '密码已修改，请重新登录'})
+                return
         with self.lock:
+            self.password_generation += 1
             self.sessions.clear()
         h.respond(200, {'ok': True}, {'Set-Cookie': self.cookie('', 0)})
